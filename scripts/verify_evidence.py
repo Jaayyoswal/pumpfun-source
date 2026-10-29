@@ -3,6 +3,7 @@
 import hashlib,json,pathlib,struct
 from capture import b58
 from analyze import elf_layout
+from solders.pubkey import Pubkey
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 # Every capture this repository publishes. The gate used to assert a count floor (`count>=4`),
 # which hid the loss of up to five captures: deleting four of the nine still passed
@@ -13,6 +14,14 @@ EXPECTED_CAPTURES=frozenset({
  'evidence/dependencies/token_metadata','evidence/original/mayhem','evidence/original/pump',
  'evidence/original/pump_amm','evidence/original/pump_fees'})
 def sha(b): return hashlib.sha256(b).hexdigest()
+UPGRADEABLE_LOADER=Pubkey.from_string('BPFLoaderUpgradeab1e11111111111111111111111')
+# The program account only stores its ProgramData address, and every hash is checked against the
+# capture's own record, so another program's account, ProgramData and payload could be filed under
+# this program id. ProgramData must be the loader PDA of `program`, which ties the bytes to the id.
+def check_programdata_pda(m):
+    derived,_=Pubkey.find_program_address([bytes(Pubkey.from_string(m['program']))],UPGRADEABLE_LOADER)
+    if str(derived)!=m['programdata']:
+        raise AssertionError(f"programdata {m['programdata']} is not the loader PDA of {m['program']} ({derived})")
 def main():
     count=0
     upstream=json.loads((ROOT/'evidence/upstream/provenance.json').read_text())
@@ -30,6 +39,7 @@ def main():
         assert sha(p)==m['program_sha256']; assert sha(d)==m['programdata_sha256']; assert sha(b)==m['payload_sha256']
         assert len(p)==36 and struct.unpack_from('<I',p)[0]==2
         assert b58(p[4:])==m['programdata']
+        check_programdata_pda(m)
         assert struct.unpack_from('<I',d)[0]==3
         assert struct.unpack_from('<Q',d,4)[0]==m['last_deploy_slot']
         assert (b58(d[13:45]) if d[12] else None)==m['upgrade_authority']

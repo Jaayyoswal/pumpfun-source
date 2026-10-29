@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Mutation tests ensuring the byte comparator cannot hide code/padding changes."""
+import contextlib
+import io
+import json
 import struct
 import unittest
 from types import SimpleNamespace
 import deep_section_analysis
 import analyze
 from compare import compare
+import verify_evidence
 class ComparisonTests(unittest.TestCase):
     def test_equal(self): self.assertTrue(compare(b'abc\0\0',b'abc\0\0')['full_byte_equality'])
     def test_code_mutation(self): self.assertEqual(compare(b'abc\0\0',b'axc\0\0')['first_difference'],1)
@@ -70,6 +74,32 @@ class InstructionLogNameTests(unittest.TestCase):
         self.assertEqual(len(names), 25)
         self.assertIn('Buy', names)
         self.assertIn('InitializeGlobalParams', names)
+
+
+class ProgramDataPdaTests(unittest.TestCase):
+    def record(self, name):
+        return json.loads((analyze.ROOT / 'evidence' / name / 'capture.json').read_text())
+
+    def test_upgradeable_captures_bind_to_loader_pda(self):
+        for f in sorted((analyze.ROOT / 'evidence').glob('**/capture.json')):
+            m = json.loads(f.read_text())
+            if m.get('loader') != 'legacy-v2':
+                verify_evidence.check_programdata_pda(m)
+
+    def test_other_programs_bytes_under_this_program_id_are_rejected(self):
+        m = self.record('original/pump')
+        m['programdata'] = self.record('original/pump_amm')['programdata']
+        with self.assertRaises(AssertionError):
+            verify_evidence.check_programdata_pda(m)
+
+    def test_gate_checks_every_upgradeable_capture(self):
+        seen = []
+        check = verify_evidence.check_programdata_pda
+        verify_evidence.check_programdata_pda = lambda m: (seen.append(m['program']), check(m))
+        self.addCleanup(setattr, verify_evidence, 'check_programdata_pda', check)
+        with contextlib.redirect_stdout(io.StringIO()):
+            verify_evidence.main()
+        self.assertEqual(len(seen), 8)
 
 
 if __name__=='__main__': unittest.main()
