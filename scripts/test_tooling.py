@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Mutation tests ensuring the byte comparator cannot hide code/padding changes."""
+import hashlib
+import io
+import json
+import os
 import struct
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 import deep_section_analysis
@@ -70,6 +78,80 @@ class InstructionLogNameTests(unittest.TestCase):
         self.assertEqual(len(names), 25)
         self.assertIn('Buy', names)
         self.assertIn('InitializeGlobalParams', names)
+
+
+@unittest.skipUnless(sys.version_info >= (3, 11), 'pump_dependency_cache needs tomllib')
+class DependencyCacheArchiveTests(unittest.TestCase):
+    def import_seed(self, extra=None):
+        import pump_dependency_cache as m
+        sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            crate = root / 'repo/prog'
+            crate.mkdir(parents=True)
+            (crate / 'Cargo.toml').write_text('[package]\nname="prog"\nversion="0.1.0"\n[workspace]\n')
+            files = {'Cargo.toml': b'[package]\nname="dep"\nversion="1.0.0"\n', 'src/lib.rs': b'pub fn f() {}\n'}
+            data = io.BytesIO()
+            with tarfile.open(fileobj=data, mode='w:gz') as tar:
+                for name, body in files.items():
+                    info = tarfile.TarInfo('dep-1.0.0/' + name)
+                    info.size = len(body)
+                    tar.addfile(info, io.BytesIO(body))
+            home = root / 'cargo'
+            namespace = 'index.crates.io-1949cf8c6b5b557f'
+            archive = home / 'registry/cache' / namespace / 'dep-1.0.0.crate'
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(data.getvalue())
+            (crate / 'Cargo.lock').write_text(
+                'version = 3\n[[package]]\nname="dep"\nversion="1.0.0"\nchecksum="%s"\n'
+                '[[package]]\nname="prog"\nversion="0.1.0"\n' % sha(archive))
+            source = home / 'registry/src' / namespace / 'dep-1.0.0'
+            for name, body in {**files, '.cargo-ok': b'{"v":1}', **({extra: b'fn main() {}\n'} if extra and extra != 'linked' else {})}.items():
+                (source / name).parent.mkdir(parents=True, exist_ok=True)
+                (source / name).write_bytes(body)
+            if extra == 'linked':
+                os.symlink(source / 'src', source / 'linked')
+            build = root / 'build'
+            (build / 'target/release/deps').mkdir(parents=True)
+            (build / 'target/release/deps/libdep-0123456789abcdef.rlib').write_bytes(b'rlib')
+            for name in ['candidate.so', 'unstripped.so']:
+                (build / name).write_bytes(name.encode())
+            wrapper = root / 'wrapper'
+            wrapper.write_text('w')
+            (build / 'build-comparison.json').write_text(json.dumps({
+                'returncode': 0, 'source_unchanged': True, 'source_sha256': {},
+                'comparison': {'candidate_sha256': sha(build / 'candidate.so')},
+                'unstripped_sha256': sha(build / 'unstripped.so'),
+                'tool_sha256': {'rustc': 'r', 'cargo': 'c'}, 'source_wrapper_sha256': sha(wrapper),
+                'environment': {'CARGO_HOME': str(home)},
+                'command': ['cargo', '--manifest-path', str(crate / 'Cargo.toml')]}))
+            cache = object.__new__(m.DependencyCache)
+            cache.repo, cache.crate, cache.workspace, cache.direct = root / 'repo', crate, crate, False
+            cache.env = {'CARGO_HOME': str(home)}
+            cache.target = 'sbf-solana-solana'
+            cache.target_flags_key = 'CARGO_TARGET_SBF_SOLANA_SOLANA_RUSTFLAGS'
+            cache.tools = {'rust/bin/rustc': 'r', 'rust/bin/cargo': 'c'}
+            cache.sources = {str(source): m.tree(source)}
+            cache.packages = cache.crates = {'dep'}
+            cache.main_names = {'prog'}
+            cache.context = {'wrapper_sha256': sha(wrapper), 'external_sources': cache.sources}
+            cache.root, cache.key, cache.record = root / 'cache', 'k', {}
+            cache.entry = cache.root / 'k'
+            try:
+                cache.import_clean_build(build)
+            finally:
+                published = cache.entry.exists()
+            return cache.record, published
+
+    def test_locked_source_tree_is_imported(self):
+        record, published = self.import_seed()
+        self.assertEqual(record['imported_clean_build']['archive_files_verified'], 2)
+        self.assertTrue(published)
+
+    def test_files_absent_from_locked_archive_are_rejected(self):
+        for extra in ['build.rs', 'src/evil.rs', 'linked']:
+            with self.subTest(extra=extra), self.assertRaisesRegex(AssertionError, 'absent from locked archive'):
+                self.import_seed(extra)
 
 
 if __name__=='__main__': unittest.main()
