@@ -136,13 +136,21 @@ def plan(a, repo, env, *, cache_root=None, policy_directory=None):
             if isinstance(value, dict):
                 for k, v in value.items():
                     if k == 'path' and isinstance(v, str) and pathlib.Path(v).suffix != '.rs':
+                        # The copied manifest keeps this spelling, so an absolute path would
+                        # build the live directory instead of the recorded snapshot.
+                        # ntpath.splitdrive also catches drive-relative spellings such as C:dep.
+                        if v.startswith(('/', '\\')) or pathlib.Path(v).is_absolute() or ntpath.splitdrive(v)[0]:
+                            raise ValueError('absolute Cargo path dependencies are unsupported: '+v)
                         target = (repo/name).parent/v/'Cargo.toml'
+                        if not target.resolve().is_relative_to(repo):
+                            raise ValueError('Cargo path dependency is outside the recorded snapshot: '+v)
                         if target.is_file() and str(target.resolve().relative_to(repo)) not in sources:
                             raise ValueError('unrecorded local path dependency; supply --extra-input: '+str(target))
                     walk(v)
             elif isinstance(value, list):
                 for v in value: walk(v)
-        walk(data)
+        # [package] holds no dependencies (`build` is checked above; Cargo ignores metadata).
+        walk({k: v for k, v in data.items() if k != 'package'})
     for member in workspace_toml.get('workspace', {}).get('members', []):
         hits = list(ws.glob(member))
         if not hits or any(str((d/'Cargo.toml').relative_to(repo)) not in sources for d in hits):
