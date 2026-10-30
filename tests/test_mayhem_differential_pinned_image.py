@@ -136,6 +136,8 @@ class MayhemTradePinnedImageTests(unittest.TestCase):
             fixture.ROOT = root
             fixture.MAY = "mayhem"
             fixture.sha = lambda data: hashlib.sha256(data).hexdigest()
+            # PumpReport binds the trade fixture's report inputs; this test owns none.
+            fixture.f = types.SimpleNamespace(REPORT_INPUTS=())
 
             def run(case, binary=None):
                 data = Path(binary or original).read_bytes()
@@ -170,7 +172,8 @@ class MayhemTradePinnedImageTests(unittest.TestCase):
                 "solders": solders,
                 "solders.transaction": transaction,
             }
-            with patch.dict(sys.modules, modules):
+            # The runner's real report helpers (PumpReport, bound_input_key) load from scripts/.
+            with patch.dict(sys.modules, modules), patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
                 spec = importlib.util.spec_from_file_location(
                     "mayhem_buy_differential", script
                 )
