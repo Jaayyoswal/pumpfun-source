@@ -15,16 +15,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts/mayhem_sell_differential.py'
 ORIGINAL = ROOT / 'evidence/original/mayhem/deployed.so'
-MODE = 'sell'
-SELL_DRIVER = '''
-import sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-import mayhem_sell_differential as differential
-differential.D = Path(sys.argv[2])
-sys.argv = [differential.__file__, *sys.argv[3:]]
-differential.main()
-'''
 
 class MayhemLimitTests(unittest.TestCase):
     def test_invalid_limits_fail_before_input_access_and_keep_output(self):
@@ -38,8 +28,7 @@ class MayhemLimitTests(unittest.TestCase):
                     output.write_bytes(b'retained')
                     args = [sys.executable, '-B', *flags, str(SCRIPT), '--candidate',
                             str(directory / 'missing.so'), '--output', str(output), '--limit', value]
-                    if MODE == 'buy':
-                        args += ['--cases', str(directory / 'missing-cases.json')]
+                    args += ['--cases', str(directory / 'missing-cases.json')]
                     result = subprocess.run(args, cwd=ROOT, env=environment,
                                             capture_output=True, text=True, timeout=60)
                     if flags:
@@ -71,12 +60,7 @@ class MayhemLimitTests(unittest.TestCase):
                     arguments = ['--candidate', str(ORIGINAL), '--output', str(output)]
                     if value is not None:
                         arguments += ['--limit', value]
-                    if MODE == 'buy':
-                        command = [sys.executable, '-B', str(SCRIPT), *arguments, '--cases', str(cases)]
-                    else:
-                        # Supply this legacy runner's existing D input with owned cases.
-                        command = [sys.executable, '-B', '-c', SELL_DRIVER,
-                                   str(ROOT / 'scripts'), str(directory), *arguments]
+                    command = [sys.executable, '-B', str(SCRIPT), *arguments, '--cases', str(cases)]
                     result = subprocess.run(command, cwd=ROOT, env=environment,
                                             capture_output=True, text=True, timeout=120)
                     self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
