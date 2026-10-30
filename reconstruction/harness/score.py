@@ -23,13 +23,7 @@ BASE = SC / 'base'
 DEFAULT_BASELINE = SC / 'pump-main/baseline/score.json'
 
 
-def sections(blob):
-    shoff, = struct.unpack_from('<Q', blob, 0x28)
-    shentsize, shnum, shstrndx = struct.unpack_from('<HHH', blob, 0x3a)
-    hdrs = [struct.unpack_from('<IIQQQQIIQQ', blob, shoff + i * shentsize) for i in range(shnum)]
-    strtab = hdrs[shstrndx]
-    name = lambda off: blob[strtab[4] + off:blob.index(b'\0', strtab[4] + off)].decode()
-    return {name(h[0]): {'addr': h[3], 'offset': h[4], 'size': h[5]} for h in hdrs}
+from score_admission import sections, baseline as load_baseline, same_domain, report_destination
 
 
 def normalize(raw, address, secs):
@@ -133,11 +127,6 @@ def score_with_hash(cand_path):
     return res, hashlib.sha256(cand).hexdigest()
 
 
-def load_baseline(p):
-    d = json.loads(Path(p).read_text())
-    if 'windows' in d and isinstance(d['windows'], list):  # Codex inventory format
-        return {w['start']: {'normalized': bool(w['normalized_matches']), 'raw': w['raw_match'], 'bytes': w['bytes']} for w in d['windows']}
-    return {int(k): v for k, v in d['windows'].items()}
 
 
 def main():
@@ -149,13 +138,21 @@ def main():
     ap.add_argument('--quiet', action='store_true')
     a = ap.parse_args()
     if a.no_baseline:
-        base = {}
+        base = None
     elif a.baseline.is_file():
         base = load_baseline(a.baseline)
     else:
         print(f'score.py: baseline not found: {a.baseline} (pass --no-baseline to score without one)', file=sys.stderr)
         sys.exit(2)
+    inputs = [a.candidate, BASE / 'original.so', BASE / 'functions.tsv']
+    if base is not None:
+        inputs.insert(1, a.baseline)
+    report_destination(a.json, inputs)
     cur, candidate_sha256 = score_with_hash(a.candidate)
+    if base is None:
+        base = {}
+    else:
+        same_domain(cur, base)
     n = sum(v['normalized'] for v in cur.values()); r = sum(v['raw'] for v in cur.values())
     tb = sum(v['bytes'] for v in cur.values() if v['normalized'])
     gains = sorted(k for k, v in cur.items() if v['normalized'] and not base.get(k, {}).get('normalized'))

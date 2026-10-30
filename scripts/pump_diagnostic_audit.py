@@ -113,7 +113,9 @@ def main():
     result = audit(report['suites'])
     result['source_report_sha256'] = hashlib.sha256(raw).hexdigest()
     result['script_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    args.output.write_text(json.dumps(result, indent=2) + '\n')
+    # Audits are new evidence: never replace an input or a prior receipt.
+    with args.output.open('x', encoding='utf-8') as stream:
+        stream.write(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'log_bearing_cases': result['log_bearing_cases'], 'mismatches': len(result['mismatches'])}))
     return bool(result['mismatches'])
 
