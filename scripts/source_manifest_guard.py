@@ -61,7 +61,6 @@ def _no_linked_directories(top):
 
 def strict_manifest(crate, workspace, repository, extra_inputs=(), cwd=None):
     """Return the archived manifest after rejecting symlinked or outside inputs."""
-    manifest = source_manifest(crate, workspace, repository, extra_inputs, cwd=cwd)
     root = Path(repository).resolve()
     crate_path, workspace_path = Path(crate).resolve(), Path(workspace).resolve()
     _no_linked_directories(crate_path)
@@ -69,8 +68,6 @@ def strict_manifest(crate, workspace, repository, extra_inputs=(), cwd=None):
         _no_linked_directories(directory / 'idls')
         if directory == workspace_path:
             break
-    for name in manifest:
-        _plain(root / name, root)
     for extra in extra_inputs:
         extra_path = Path(extra)
         if not extra_path.is_absolute():
@@ -81,4 +78,11 @@ def strict_manifest(crate, workspace, repository, extra_inputs=(), cwd=None):
             for path in extra_path.rglob('*'):
                 if path.is_file():
                     _plain(path, root)
-    return manifest
+    return source_manifest(
+        crate,
+        workspace,
+        repository,
+        extra_inputs,
+        cwd=cwd,
+        before_read=lambda path: _plain(path, root),
+    )
