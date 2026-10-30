@@ -50,6 +50,8 @@ jobs:
               python -I -B tests/test_dispatch_root.py
               python -I -B tests/test_analyze_input_admission.py
               python scripts/test_tooling.py
+              python -B scripts/test_amm_harness_content_cache.py
+              python -B tests/test_amm_pinned_candidate.py
               python -B tests/test_recovered_builds_optimization.py
               python -B scripts/test_mayhem_burn_sequence_optimization.py
               python -B -X utf8 tests/test_dispatch_idl_encoding.py
